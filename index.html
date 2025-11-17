@@ -48,7 +48,7 @@
       Clique no jogo para focar e usar o teclado (Enter, setas, espaço, P…)
     </div>
 
-    <script>
+        <script>
       window.addEventListener("DOMContentLoaded", () => {
         const ruffle = window.RufflePlayer && window.RufflePlayer.newest
           ? window.RufflePlayer.newest()
@@ -67,18 +67,24 @@
         player.style.width = "100%";
         player.style.height = "100%";
 
-        // ⚠️ IMPORTANTE: nome do seu SWF
+        // carrega o SWF
         player.load("rocket_game.swf");
 
-        // foca o container ao clicar (teclado)
-        container.tabIndex = 0;
-        container.addEventListener("click", () => container.focus());
+        // o foco precisa ir para o *player*, não só para o container
+        player.tabIndex = 0;
 
         // tenta focar automaticamente depois de um tempinho
         setTimeout(() => {
-          try { container.focus(); } catch (e) {}
+          try { player.focus(); } catch (e) {}
         }, 500);
+
+        // ao clicar na área do jogo, foca o player (teclado funciona)
+        container.addEventListener("click", () => {
+          try { player.focus(); } catch (e) {}
+        });
       });
     </script>
+
   </body>
 </html>
+
