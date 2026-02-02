@@ -2,7 +2,7 @@
 <html lang="pt-br">
   <head>
     <meta charset="utf-8" />
-    <title>Rocket Game</title>
+    <title>Hunter Space</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <!-- Ruffle (emulador de Flash) -->
@@ -40,15 +40,55 @@
           aspect-ratio: 4 / 3; /* só pra caber melhor em tela pequena */
         }
       }
+
+      /* overlay leaderboard styles (hidden by default) */
+      #pfOverlay {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0,0,0,0.75);
+        z-index: 9999;
+      }
+      #pfOverlayBox {
+        width: 360px;
+        max-height: 80vh;
+        overflow: auto;
+        background: #111;
+        border: 2px solid #444;
+        padding: 14px;
+        color: #fff;
+        font-family: monospace;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+      }
+      #pfOverlayBox h3 { margin:0 0 8px 0; font-size:16px; }
+      #pfOverlayBox pre { white-space: pre-wrap; margin:0; font-size:13px; }
+      #pfOverlayBox button { padding:6px 10px; }
     </style>
   </head>
   <body>
     <div class="frame" id="game-container"></div>
     <div class="hint">
-     Click on the game to play and use the keyboard (Enter = Start, Arrow keys = Move, Space = Shoot, P = Pause)
+      Click on the game to play and use the keyboard (Enter = Start, Arrow keys = Move, Space = Shoot, P = Pause)
     </div>
 
-        <script>
+    <!-- overlay fallback for leaderboard -->
+    <div id="pfOverlay">
+      <div id="pfOverlayBox">
+        <h3>Leaderboard (online)</h3>
+        <pre id="pfOverlayText">Carregando...</pre>
+        <div style="text-align:right;margin-top:8px;">
+          <button id="pfOverlayClose">Fechar</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Setup and load the Ruffle player
       window.addEventListener("DOMContentLoaded", () => {
         const ruffle = window.RufflePlayer && window.RufflePlayer.newest
           ? window.RufflePlayer.newest()
@@ -63,11 +103,14 @@
         const container = document.getElementById("game-container");
         const player = ruffle.createPlayer();
 
+        // Important: give the player an id for potential ExternalInterface / DOM bridging
+        player.id = "game";
+
         container.appendChild(player);
         player.style.width = "100%";
         player.style.height = "100%";
 
-        // carrega o SWF
+        // carrega o SWF (coloque o SWF no mesmo diretório ou ajuste o caminho)
         player.load("rocket_game.swf");
 
         // o foco precisa ir para o *player*, não só para o container
@@ -85,7 +128,170 @@
       });
     </script>
 
+    <!-- PlayFab JS bridge: performs PlayFab REST calls via fetch and exposes functions for AS3 -->
+    <script>
+    (function(){
+      const TITLE_ID = "1D2BB9"; // <- substitua pelo seu Title ID se for diferente
+      const BASE_URL = "https://" + TITLE_ID + ".playfabapi.com";
+
+      // Estado
+      let sessionTicket = "";
+      let playFabId = "";
+      let customId = localStorage.getItem("pf_customId") || ("player_" + Math.floor(Math.random()*99999999));
+      localStorage.setItem("pf_customId", customId);
+
+      // Overlay DOM references
+      const overlay = document.getElementById("pfOverlay");
+      const overlayText = document.getElementById("pfOverlayText");
+      const overlayClose = document.getElementById("pfOverlayClose");
+      overlayClose.addEventListener("click", ()=> overlay.style.display = "none");
+
+      // Helpers
+      function intOr(v, d) { const n = parseInt(v); return isNaN(n) ? d : n; }
+
+      async function pfPost(endpoint, body, ticket) {
+        const url = BASE_URL + endpoint;
+        const headers = { "Content-Type": "application/json" };
+        if (ticket) headers["X-Authorization"] = ticket;
+        const resp = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body)
+        });
+        const json = await resp.json().catch(()=>null);
+        return { status: resp.status, json: json };
+      }
+
+      function callAs3IfAvailable(fnName, arg) {
+        try {
+          // 1) global function on window
+          if (typeof window[fnName] === "function") {
+            window[fnName](JSON.stringify(arg));
+            return true;
+          }
+          // 2) try the ruffle element by id 'game'
+          const elem = document.getElementById("game");
+          if (elem && typeof elem[fnName] === "function") {
+            try { elem[fnName](JSON.stringify(arg)); return true; } catch(_){}
+          }
+          // 3) parent window
+          if (typeof window.parent[fnName] === "function") {
+            window.parent[fnName](JSON.stringify(arg));
+            return true;
+          }
+        } catch (err) {
+          console.warn("[PlayFab JS] callAs3IfAvailable error:", err);
+        }
+        return false;
+      }
+
+      function showLeaderboardOverlay(entries) {
+        if (!entries || entries.length === 0) {
+          overlayText.textContent = "Nenhum resultado.";
+        } else {
+          let out = "";
+          for (let i=0;i<entries.length;i++) {
+            const e = entries[i];
+            const name = e.DisplayName || e.PlayFabId || "id";
+            const val = (e.StatValue !== undefined) ? e.StatValue : (e.Value !== undefined ? e.Value : 0);
+            out += (i+1) + ". " + name + " — " + val + "\n";
+          }
+          overlayText.textContent = out;
+        }
+        overlay.style.display = "flex";
+      }
+
+      // Public API functions
+
+      // login (CustomID)
+      async function login(custom) {
+        if (custom) {
+          customId = custom;
+          localStorage.setItem("pf_customId", customId);
+        }
+        try {
+          const body = {
+            TitleId: TITLE_ID,
+            CustomId: customId,
+            CreateAccount: true,
+            InfoRequestParameters: { GetUserAccountInfo: true }
+          };
+          const r = await pfPost("/Client/LoginWithCustomID", body, null);
+          console.log("[PlayFab JS] login status", r.status, r.json);
+          if (r.status === 200 && r.json && r.json.data) {
+            sessionTicket = r.json.data.SessionTicket || "";
+            playFabId = r.json.data.PlayFabId || "";
+            callAs3IfAvailable("onPlayFabLogin", { ok:true, data: r.json.data });
+          } else {
+            callAs3IfAvailable("onPlayFabLogin", { ok:false, error: r.json || { status: r.status } });
+          }
+          return r;
+        } catch (err) {
+          console.error("[PlayFab JS] login error", err);
+          callAs3IfAvailable("onPlayFabLogin", { ok:false, error: String(err) });
+          return { status:0, json:null };
+        }
+      }
+
+      // submitScore: uses sessionTicket stored here
+      async function submitScore(score, kills, level) {
+        try {
+          if (!sessionTicket) {
+            console.warn("[PlayFab JS] submitScore: no sessionTicket");
+            callAs3IfAvailable("onSubmitScoreResult", { ok:false, error:"NoSessionTicket" });
+            return { status:0, json:null };
+          }
+          const body = { Statistics: [
+            { StatisticName:"Score", Value: intOr(score,0) },
+            { StatisticName:"Kills", Value: intOr(kills,0) },
+            { StatisticName:"Level", Value: intOr(level,0) }
+          ] };
+          const r = await pfPost("/Client/UpdatePlayerStatistics", body, sessionTicket);
+          console.log("[PlayFab JS] submit status", r.status, r.json);
+          callAs3IfAvailable("onSubmitScoreResult", r);
+          return r;
+        } catch (err) {
+          console.error("[PlayFab JS] submitScore error", err);
+          callAs3IfAvailable("onSubmitScoreResult", { status:0, error:String(err) });
+          return { status:0, json:null };
+        }
+      }
+
+      // getTopN and show overlay + call AS3 if available
+      async function getTopN(statName, n) {
+        try {
+          if (!sessionTicket) {
+            console.warn("[PlayFab JS] getTopN: no sessionTicket");
+            callAs3IfAvailable("onLeaderboardResult", { ok:false, error:"NoSessionTicket" });
+            return { status:0, json:null };
+          }
+          const body = { StatisticName: statName, StartPosition: 0, MaxResultsCount: n };
+          const r = await pfPost("/Client/GetLeaderboard", body, sessionTicket);
+          console.log("[PlayFab JS] leaderboard status", r.status, r.json);
+          if (r.status === 200 && r.json && r.json.data && r.json.data.Leaderboard) {
+            callAs3IfAvailable("onLeaderboardResult", { ok:true, entries: r.json.data.Leaderboard });
+            showLeaderboardOverlay(r.json.data.Leaderboard);
+          } else {
+            callAs3IfAvailable("onLeaderboardResult", { ok:false, error: r.json || { status:r.status } });
+          }
+          return r;
+        } catch (err) {
+          console.error("[PlayFab JS] getTopN error", err);
+          callAs3IfAvailable("onLeaderboardResult", { ok:false, error:String(err) });
+          return { status:0, json:null };
+        }
+      }
+
+      // Expose global functions for AS3 to call via ExternalInterface
+      window.playfabLoginFromPage = (cid) => { return login(cid); };
+      window.playfabSubmitScore = (score,kills,level) => submitScore(score,kills,level);
+      window.playfabGetTopN = (statName,n) => getTopN(statName,n);
+
+      // Auto-login on page load to speed up (optional)
+      window.addEventListener('load', function(){ login(); });
+
+    })();
+    </script>
+
   </body>
 </html>
-
-
