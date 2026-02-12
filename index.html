@@ -71,7 +71,7 @@
     player.load("rocket_game.swf");
   });
 
-  // ---------- PlayFab IIFE com TitleId header e lowercased ----------
+  // ---------- PlayFab IIFE ----------
   (function(){
     // IMPORTANT: TitleId in lowercase to match PlayFab routing
     const TITLE_ID = "1d2bb9";
@@ -110,62 +110,45 @@
       dbgStatus.textContent = lastResponse ? (lastResponse.status + (lastResponse.tag ? " ("+lastResponse.tag+")" : "")) : "-";
     }
 
-    // Substitua sua pfPost por esta versão (NÃO envia X-PlayFabTitleId)
-async function pfPost(endpoint, body, ticket, opts) {
-  opts = opts || {};
-  const tag = opts.tag || "";
-  const makeRequest = async (tk) => {
-    const url = BASE_URL + endpoint;
-    // NÃO incluir X-PlayFabTitleId; apenas Content-Type e opcional X-Authorization
-    const headers = { "Content-Type": "application/json" };
-    if (tk) headers["X-Authorization"] = tk;
-    try {
-      log("[PlayFab JS] POST", url, "tag:", tag, "body:", body, "headers:", { XAuthorization: !!tk });
-      const resp = await fetch(url, { method:"POST", headers, body: JSON.stringify(body) });
-      let json = null;
-      try { json = await resp.json(); } catch(_){}
-      lastResponse = { status: resp.status, json: json, endpoint:endpoint, tag: tag };
-      setDebugFields();
-      log(`[PlayFab JS] ${endpoint} → status ${resp.status}`, { body: body, resp: json });
-      return { status: resp.status, json: json, respObj: resp };
-    } catch (err) {
-      lastResponse = { status:0, error:String(err), endpoint:endpoint };
-      setDebugFields();
-      log("[PlayFab JS] Fetch error", err);
-      return { status:0, json:null, error:err };
+    // wrapper do fetch que faz retry em 401 (re-login) uma vez
+    async function pfPost(endpoint, body, ticket, opts) {
+      opts = opts || {};
+      const tag = opts.tag || "";
+      const makeRequest = async (tk) => {
+        const url = BASE_URL + endpoint;
+        // NÃO incluir X-PlayFabTitleId; apenas Content-Type e opcional X-Authorization
+        const headers = { "Content-Type": "application/json" };
+        if (tk) headers["X-Authorization"] = tk;
+        try {
+          log("[PlayFab JS] POST", url, "tag:", tag, "body:", body, "headers:", { XAuthorization: !!tk });
+          const resp = await fetch(url, { method:"POST", headers, body: JSON.stringify(body) });
+          let json = null;
+          try { json = await resp.json(); } catch(_){}
+          lastResponse = { status: resp.status, json: json, endpoint:endpoint, tag: tag };
+          setDebugFields();
+          log(`[PlayFab JS] ${endpoint} → status ${resp.status}`, { body: body, resp: json });
+          return { status: resp.status, json: json, respObj: resp };
+        } catch (err) {
+          lastResponse = { status:0, error:String(err), endpoint:endpoint };
+          setDebugFields();
+          log("[PlayFab JS] Fetch error", err);
+          return { status:0, json:null, error:err };
+        }
+      };
+
+      // first try
+      let r = await makeRequest(ticket);
+
+      // if 401, try re-login once automatically (common case: expired/invalid ticket)
+      if (r.status === 401 && !opts._retried) {
+        log("[PlayFab JS] 401 detected, trying automatic re-login...");
+        await login(customId, { silent:true });
+        // attempt again with new ticket
+        opts._retried = true;
+        r = await makeRequest(sessionTicket);
+      }
+      return r;
     }
-  };
-
-  // primeira tentativa
-  let r = await makeRequest(ticket);
-
-  // se 401, tenta re-login automático uma vez
-  if (r.status === 401 && !opts._retried) {
-    log("[PlayFab JS] 401 detected, trying automatic re-login...");
-    await login(customId, { silent:true });
-    opts._retried = true;
-    r = await makeRequest(sessionTicket);
-  }
-  return r;
-}
-
-// Substitua setDisplayName por esta versão que garante login se necessário
-async function setDisplayName(displayName) {
-  // Se não houver sessionTicket, force login primeiro
-  if (!sessionTicket) {
-    log("[PlayFab JS] No sessionTicket — logging in before setDisplayName...");
-    const loginRes = await login(customId);
-    if (!loginRes || loginRes.status !== 200) {
-      log("[PlayFab JS] Cannot set display name because login failed", loginRes);
-      callAs3IfAvailable("onSetDisplayNameResult", { status:0, error:"LoginFailed" });
-      return loginRes || { status:0 };
-    }
-  }
-  const body = { DisplayName: String(displayName) };
-  const r = await pfPost("/Client/UpdateUserTitleDisplayName", body, sessionTicket, { tag:"setDisplayName" });
-  callAs3IfAvailable("onSetDisplayNameResult", { status: r.status, json: r.json });
-  return r;
-}
 
     // helper: try to call AS3 SWF callbacks
     function callAs3IfAvailable(fnName, argObj) {
@@ -253,7 +236,17 @@ async function setDisplayName(displayName) {
       return r;
     }
 
+    // Ensure login before setting display name
     async function setDisplayName(displayName) {
+      if (!sessionTicket) {
+        log("[PlayFab JS] No sessionTicket — logging in before setDisplayName...");
+        const loginRes = await login(customId);
+        if (!loginRes || loginRes.status !== 200) {
+          log("[PlayFab JS] Cannot set display name because login failed", loginRes);
+          callAs3IfAvailable("onSetDisplayNameResult", { status:0, error:"LoginFailed" });
+          return loginRes || { status:0 };
+        }
+      }
       const body = { DisplayName: String(displayName) };
       const r = await pfPost("/Client/UpdateUserTitleDisplayName", body, sessionTicket, { tag:"setDisplayName" });
       callAs3IfAvailable("onSetDisplayNameResult", { status: r.status, json: r.json });
@@ -310,4 +303,3 @@ async function setDisplayName(displayName) {
   </script>
 </body>
 </html>
-
