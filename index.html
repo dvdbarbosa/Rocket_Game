@@ -24,7 +24,7 @@
 
     <div class="panel" id="debugPanel">
       <h4>PlayFab Debug Panel</h4>
-      <div class="kv"><span>TitleId</span><span id="dbgTitle">1d2bb9</span></div>
+      <div class="kv"><span>TitleId</span><span id="dbgTitle">15ac49</span></div>
       <div class="kv"><span>customId</span><span id="dbgCustom">-</span></div>
       <div class="kv"><span>playFabId</span><span id="dbgPlayFabId">-</span></div>
       <div class="kv"><span>sessionTicket</span><span id="dbgTicket">-</span></div>
@@ -73,8 +73,9 @@
 
   // ---------- PlayFab IIFE ----------
   (function(){
-    // IMPORTANT: TitleId in lowercase to match PlayFab routing
-    const TITLE_ID = "1d2bb9";
+    // Use seu Title ID: o hostname usa a versão lowercase para roteamento
+    const ORIGINAL_TITLE_ID = "15AC49"; // conforme PlayFab Game Manager
+    const TITLE_ID = ORIGINAL_TITLE_ID.toLowerCase(); // "15ac49" para montar hostname
     const BASE_URL = "https://" + TITLE_ID + ".playfabapi.com";
 
     // state
@@ -188,7 +189,8 @@
       opts = opts || {};
       if (cid) { customId = cid; localStorage.setItem("pf_customId", customId); }
       try {
-        const body = { TitleId: TITLE_ID, CustomId: customId, CreateAccount: true, InfoRequestParameters: { GetUserAccountInfo: true } };
+        // Use ORIGINAL_TITLE_ID in the body (same as your PlayFab Game Manager)
+        const body = { TitleId: ORIGINAL_TITLE_ID, CustomId: customId, CreateAccount: true, InfoRequestParameters: { GetUserAccountInfo: true } };
         const r = await pfPost("/Client/LoginWithCustomID", body, null, { tag:"login" });
         if (r.status === 200 && r.json && r.json.data) {
           sessionTicket = r.json.data.SessionTicket || "";
