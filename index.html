@@ -16,6 +16,9 @@
     button { padding:6px 8px; margin-top:6px; }
     textarea { width:100%; height:120px; background:#071018; color:#bfe; border:1px solid #163; padding:6px; box-sizing:border-box; font-family:monospace; font-size:12px; }
     .ok { color:#7df27d; } .err { color:#ff7b7b; }
+    #pfNotice { margin-top:8px; padding:8px; border-radius:6px; background:#111; color:#ddd; font-size:13px; min-height:34px; display:flex; align-items:center; }
+    #pfNotice.warn { background:#3b2a00; color:#ffd87a; }
+    #pfNotice.error { background:#2a0000; color:#ffbdbd; }
   </style>
 </head>
 <body>
@@ -29,13 +32,16 @@
       <div class="kv"><span>playFabId</span><span id="dbgPlayFabId">-</span></div>
       <div class="kv"><span>sessionTicket</span><span id="dbgTicket">-</span></div>
       <div class="kv"><span>last status</span><span id="dbgStatus">-</span></div>
+
       <div style="margin-top:8px;">
         <button id="btnForceLogin">Forçar Login</button>
         <button id="btnGetTop10">Pegar Top10</button>
         <button id="btnClearLog">Limpar Log</button>
       </div>
 
-      <h4>Logs / Última resposta</h4>
+      <div id="pfNotice">Status: aguardando ações.</div>
+
+      <h4 style="margin-top:10px">Logs / Última resposta</h4>
       <textarea id="pfLog" readonly></textarea>
     </div>
   </div>
@@ -74,7 +80,7 @@
   // ---------- PlayFab IIFE ----------
   (function(){
     // Use seu Title ID: o hostname usa a versão lowercase para roteamento
-    const ORIGINAL_TITLE_ID = "15AC49"; // conforme PlayFab Game Manager
+    const ORIGINAL_TITLE_ID = "15AC49"; // valor exato do Game Manager
     const TITLE_ID = ORIGINAL_TITLE_ID.toLowerCase(); // "15ac49" para montar hostname
     const BASE_URL = "https://" + TITLE_ID + ".playfabapi.com";
 
@@ -84,6 +90,7 @@
     let customId = localStorage.getItem("pf_customId") || ("player_" + Math.floor(Math.random()*99999999));
     localStorage.setItem("pf_customId", customId);
     let lastResponse = null;
+    let isLoggingIn = false; // evita múltiplos logins concorrentes
 
     // UI refs
     const dbgCustom = document.getElementById("dbgCustom");
@@ -91,6 +98,7 @@
     const dbgTicket = document.getElementById("dbgTicket");
     const dbgStatus = document.getElementById("dbgStatus");
     const pfLog = document.getElementById("pfLog");
+    const pfNotice = document.getElementById("pfNotice");
     const overlay = document.getElementById("pfOverlay");
     const overlayText = document.getElementById("pfOverlayText");
     document.getElementById("pfOverlayClose").addEventListener("click", ()=> overlay.style.display = "none");
@@ -102,6 +110,11 @@
         pfLog.value = (pfLog.value ? pfLog.value + "\n" : "") + line;
         pfLog.scrollTop = pfLog.scrollHeight;
       } catch(e){}
+    }
+
+    function showNotice(text, type) {
+      pfNotice.textContent = text || "";
+      pfNotice.className = type ? (type === "error" ? "error" : (type === "warn" ? "warn" : "")) : "";
     }
 
     function setDebugFields() {
@@ -187,29 +200,49 @@
 
     async function login(cid, opts) {
       opts = opts || {};
-      if (cid) { customId = cid; localStorage.setItem("pf_customId", customId); }
+      if (isLoggingIn) {
+        log("[PlayFab JS] login already in progress, returning");
+        return { status:0, json:{ errorMessage: "LoginInProgress" } };
+      }
+      isLoggingIn = true;
+      showNotice("Tentando conectar ao PlayFab...", "");
       try {
-        // Use ORIGINAL_TITLE_ID in the body (same as your PlayFab Game Manager)
+        if (cid) { customId = cid; localStorage.setItem("pf_customId", customId); setDebugFields(); }
         const body = { TitleId: ORIGINAL_TITLE_ID, CustomId: customId, CreateAccount: true, InfoRequestParameters: { GetUserAccountInfo: true } };
         const r = await pfPost("/Client/LoginWithCustomID", body, null, { tag:"login" });
+
+        // Special handling: Player creation disabled (errorCode 22000)
+        if (r && r.status === 400 && r.json && r.json.errorCode === 22000) {
+          log("[PlayFab JS] Player creation disabled for this title (22000).");
+          showNotice("Criação de contas desabilitada para este título. Crie contas via servidor ou habilite criação no Game Manager.", "error");
+          callAs3IfAvailable("onPlayFabLogin", { ok:false, errorCode:22000, errorMessage: r.json.errorMessage || "PlayerCreationDisabled" });
+          isLoggingIn = false;
+          return r;
+        }
+
         if (r.status === 200 && r.json && r.json.data) {
           sessionTicket = r.json.data.SessionTicket || "";
           playFabId = r.json.data.PlayFabId || "";
           callAs3IfAvailable("onPlayFabLogin", { ok:true, data: r.json.data });
           setDebugFields();
+          showNotice("Conectado — PlayFabId: " + (playFabId || "-"), ""); // brief success notice
           // after login, try to fetch user data or leaderboard if needed
-          try { getUserData(); } catch(_){}
+          try { await getUserData(); } catch(_){}
         } else {
           sessionTicket = "";
           playFabId = "";
           callAs3IfAvailable("onPlayFabLogin", { ok:false, error: r.json || { status:r.status } });
           setDebugFields();
+          showNotice("Falha no login (veja logs).", "error");
           log("[PlayFab JS] login failed", r);
         }
+        isLoggingIn = false;
         return r;
       } catch (err) {
+        isLoggingIn = false;
         log("[PlayFab JS] login error", err);
         callAs3IfAvailable("onPlayFabLogin", { ok:false, error:String(err) });
+        showNotice("Erro de rede ao tentar conectar.", "error");
         return { status:0, error:err };
       }
     }
@@ -231,9 +264,11 @@
       if (r.status === 200 && r.json && r.json.data && r.json.data.Leaderboard) {
         callAs3IfAvailable("onLeaderboardResult", { ok:true, entries: r.json.data.Leaderboard });
         showLeaderboardOverlay(r.json.data.Leaderboard);
+        showNotice("Leaderboard carregado.", "");
       } else {
         callAs3IfAvailable("onLeaderboardResult", { ok:false, error: r.json || { status:r.status } });
         log("[PlayFab JS] getTopN failed", r);
+        showNotice("Falha ao carregar leaderboard (ver logs).", "warn");
       }
       return r;
     }
@@ -242,15 +277,23 @@
     async function setDisplayName(displayName) {
       if (!sessionTicket) {
         log("[PlayFab JS] No sessionTicket — logging in before setDisplayName...");
+        showNotice("Autenticando antes de salvar o nome...", "");
         const loginRes = await login(customId);
         if (!loginRes || loginRes.status !== 200) {
           log("[PlayFab JS] Cannot set display name because login failed", loginRes);
           callAs3IfAvailable("onSetDisplayNameResult", { status:0, error:"LoginFailed" });
+          showNotice("Não foi possível autenticar para salvar o nome.", "error");
           return loginRes || { status:0 };
         }
       }
       const body = { DisplayName: String(displayName) };
       const r = await pfPost("/Client/UpdateUserTitleDisplayName", body, sessionTicket, { tag:"setDisplayName" });
+      // If the server returns 200, notify AS3 that it's ok
+      if (r && r.status === 200) {
+        showNotice("Nome salvo com sucesso!", ""); 
+      } else if (r && r.status === 401) {
+        showNotice("Sessão inválida. Tentando reautenticar...", "warn");
+      }
       callAs3IfAvailable("onSetDisplayNameResult", { status: r.status, json: r.json });
       return r;
     }
@@ -290,7 +333,7 @@
       lastResponse: ()=> lastResponse
     };
 
-    // auto-login on page load
+    // auto-login on page load (non-blocking)
     window.addEventListener('load', function(){ login(); });
 
     // UI buttons
@@ -300,6 +343,7 @@
 
     // initial debug values
     setDebugFields();
+    showNotice("Painel pronto. Clique 'Forçar Login' para conectar.", "");
 
   })();
   </script>
