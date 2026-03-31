@@ -167,6 +167,7 @@
     }
 
     // helper: try to call AS3 SWF callbacks
+    // _cachedGameElem caches the #game Ruffle player, which is created once on DOMContentLoaded and never replaced.
     let _cachedGameElem = null;
     function callAs3IfAvailable(fnName, argObj) {
       try {
