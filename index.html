@@ -107,14 +107,15 @@
       console.log.apply(console, args);
       try {
         const line = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
-        pfLog.value = (pfLog.value ? pfLog.value + "\n" : "") + line;
+        if (pfLog.value) pfLog.value += "\n";
+        pfLog.value += line;
         pfLog.scrollTop = pfLog.scrollHeight;
       } catch(e){}
     }
 
     function showNotice(text, type) {
       pfNotice.textContent = text || "";
-      pfNotice.className = type ? (type === "error" ? "error" : (type === "warn" ? "warn" : "")) : "";
+      pfNotice.className = (type === "error" || type === "warn") ? type : "";
     }
 
     function setDebugFields() {
@@ -128,6 +129,7 @@
     async function pfPost(endpoint, body, ticket, opts) {
       opts = opts || {};
       const tag = opts.tag || "";
+      const bodyString = JSON.stringify(body);
       const makeRequest = async (tk) => {
         const url = BASE_URL + endpoint;
         // NÃO incluir X-PlayFabTitleId; apenas Content-Type e opcional X-Authorization
@@ -135,7 +137,7 @@
         if (tk) headers["X-Authorization"] = tk;
         try {
           log("[PlayFab JS] POST", url, "tag:", tag, "body:", body, "headers:", { XAuthorization: !!tk });
-          const resp = await fetch(url, { method:"POST", headers, body: JSON.stringify(body) });
+          const resp = await fetch(url, { method:"POST", headers, body: bodyString });
           let json = null;
           try { json = await resp.json(); } catch(_){}
           lastResponse = { status: resp.status, json: json, endpoint:endpoint, tag: tag };
@@ -165,13 +167,15 @@
     }
 
     // helper: try to call AS3 SWF callbacks
+    // _cachedGameElem caches the #game Ruffle player, which is created once on DOMContentLoaded and never replaced.
+    let _cachedGameElem = null;
     function callAs3IfAvailable(fnName, argObj) {
       try {
         const arg = JSON.stringify(argObj || {});
         // try global function first
         if (typeof window[fnName] === "function") { window[fnName](arg); return true; }
-        const elem = document.getElementById("game");
-        if (elem && typeof elem[fnName] === "function") { try { elem[fnName](arg); return true; } catch(_){} }
+        if (!_cachedGameElem) _cachedGameElem = document.getElementById("game");
+        if (_cachedGameElem && typeof _cachedGameElem[fnName] === "function") { try { _cachedGameElem[fnName](arg); return true; } catch(_){} }
         // For Ruffle, custom method access can fail; also try parent
         if (window.parent && typeof window.parent[fnName] === "function") { window.parent[fnName](arg); return true; }
       } catch (err) {
@@ -184,14 +188,12 @@
     function showLeaderboardOverlay(entries) {
       if (!entries || entries.length === 0) overlayText.textContent = "Nenhum resultado.";
       else {
-        let out = "";
-        for (let i=0;i<entries.length;i++) {
-          const e = entries[i];
+        const lines = entries.map((e, i) => {
           const name = e.DisplayName || e.PlayFabId || "id";
           const val = (e.StatValue !== undefined) ? e.StatValue : (e.Value !== undefined ? e.Value : 0);
-          out += (i+1) + ". " + name + " — " + val + "\n";
-        }
-        overlayText.textContent = out;
+          return (i+1) + ". " + name + " — " + val;
+        });
+        overlayText.textContent = lines.join("\n");
       }
       overlay.style.display = "flex";
     }
@@ -334,7 +336,7 @@
     };
 
     // auto-login on page load (non-blocking)
-    window.addEventListener('load', function(){ login(); });
+    window.addEventListener('DOMContentLoaded', function(){ login(); });
 
     // UI buttons
     document.getElementById("btnForceLogin").addEventListener("click", ()=> login(customId));
