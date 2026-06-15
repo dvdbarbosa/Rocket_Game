@@ -4,7 +4,13 @@
   <meta charset="utf-8" />
   <title>Hunter Space — Debug PlayFab</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
+  <!--
+    ✅ JS-3 CORRIGIDO — versão fixada do Ruffle (não usar @latest ou unpkg sem versão).
+    Troque pela versão nightly mais recente disponível em:
+    https://github.com/ruffle-rs/ruffle/releases
+    Exemplo abaixo usa o CDN oficial do Ruffle:
+  -->
+  <script src="https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2024.09.10"></script>
   <style>
     html, body { height:100%; margin:0; background:#000; color:#fff; font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
     .wrap { display:flex; gap:12px; padding:12px; align-items:flex-start; }
@@ -17,7 +23,7 @@
     textarea { width:100%; height:120px; background:#071018; color:#bfe; border:1px solid #163; padding:6px; box-sizing:border-box; font-family:monospace; font-size:12px; }
     .ok { color:#7df27d; } .err { color:#ff7b7b; }
     #pfNotice { margin-top:8px; padding:8px; border-radius:6px; background:#111; color:#ddd; font-size:13px; min-height:34px; display:flex; align-items:center; }
-    #pfNotice.warn { background:#3b2a00; color:#ffd87a; }
+    #pfNotice.warn  { background:#3b2a00; color:#ffd87a; }
     #pfNotice.error { background:#2a0000; color:#ffbdbd; }
   </style>
 </head>
@@ -27,7 +33,7 @@
 
     <div class="panel" id="debugPanel">
       <h4>PlayFab Debug Panel</h4>
-      <div class="kv"><span>TitleId</span><span id="dbgTitle">15ac49</span></div>
+      <div class="kv"><span>TitleId</span><span id="dbgTitle">15AC49</span></div>
       <div class="kv"><span>customId</span><span id="dbgCustom">-</span></div>
       <div class="kv"><span>playFabId</span><span id="dbgPlayFabId">-</span></div>
       <div class="kv"><span>sessionTicket</span><span id="dbgTicket">-</span></div>
@@ -46,7 +52,7 @@
     </div>
   </div>
 
-  <!-- overlay fallback for leaderboard -->
+  <!-- Overlay do leaderboard -->
   <div id="pfOverlay" style="display:none;position:fixed;left:0;top:0;width:100%;height:100%;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);z-index:9999;">
     <div style="width:360px;max-height:80vh;overflow:auto;background:#111;border:2px solid #444;padding:14px;color:#fff;font-family:monospace;box-shadow:0 8px 24px rgba(0,0,0,0.7);">
       <h3 style="margin:0 0 8px 0;font-size:16px;">Leaderboard (online)</h3>
@@ -56,294 +62,325 @@
   </div>
 
   <script>
-  // ---------- Ruffle player (carrega o SWF) ----------
+  // ─── Ruffle: carrega o SWF ────────────────────────────────────────────────
   window.addEventListener("DOMContentLoaded", () => {
-    const ruffle = window.RufflePlayer && window.RufflePlayer.newest ? window.RufflePlayer.newest() : null;
+    const ruffle    = window.RufflePlayer && window.RufflePlayer.newest
+                      ? window.RufflePlayer.newest() : null;
     const container = document.getElementById("game-container");
     if (!ruffle) {
       container.innerHTML = "Não foi possível carregar o Ruffle.";
       return;
     }
     const player = ruffle.createPlayer();
-    player.id = "game";
+    player.id    = "game";
     container.appendChild(player);
-    player.style.width = "100%";
+    player.style.width  = "100%";
     player.style.height = "100%";
     player.tabIndex = 0;
-    setTimeout(()=>{ try{ player.focus(); }catch(e){} }, 500);
-    container.addEventListener("click", ()=> { try{ player.focus(); }catch(e){} });
 
-    // Carregue seu SWF (coloque rocket_game.swf no mesmo diretório)
+    // Foco automático
+    setTimeout(() => { try { player.focus(); } catch(e){} }, 500);
+    container.addEventListener("click", () => { try { player.focus(); } catch(e){} });
+
+    // Carrega o SWF (coloque rocket_game.swf no mesmo diretório)
     player.load("rocket_game.swf");
   });
 
-  // ---------- PlayFab IIFE ----------
-  (function(){
-    // Use seu Title ID: o hostname usa a versão lowercase para roteamento
-    const ORIGINAL_TITLE_ID = "15AC49"; // valor exato do Game Manager
-    const TITLE_ID = ORIGINAL_TITLE_ID.toLowerCase(); // "15ac49" para montar hostname
-    const BASE_URL = "https://" + TITLE_ID + ".playfabapi.com";
+  // ─── PlayFab IIFE ─────────────────────────────────────────────────────────
+  (function () {
+    const ORIGINAL_TITLE_ID = "15AC49";           // exato do Game Manager
+    const TITLE_ID          = ORIGINAL_TITLE_ID.toLowerCase(); // hostname
+    const BASE_URL          = "https://" + TITLE_ID + ".playfabapi.com";
 
-    // state
+    // ✅ JS-1 CORRIGIDO — getStorage/setStorage com fallback para sessionStorage
+    function getStorage(key) {
+      try { return localStorage.getItem(key); } catch (_) {}
+      try { return sessionStorage.getItem(key); } catch (_) {}
+      return null;
+    }
+    function setStorage(key, value) {
+      try { localStorage.setItem(key, value); return; } catch (_) {}
+      try { sessionStorage.setItem(key, value); } catch (_) {}
+    }
+
+    // Estado
     let sessionTicket = "";
-    let playFabId = "";
-    let customId = localStorage.getItem("pf_customId") || ("player_" + Math.floor(Math.random()*99999999));
-    localStorage.setItem("pf_customId", customId);
-    let lastResponse = null;
-    let isLoggingIn = false; // evita múltiplos logins concorrentes
+    let playFabId     = "";
+    let customId      = getStorage("pf_customId") || ("player_" + Math.floor(Math.random() * 99999999));
+    setStorage("pf_customId", customId);
 
-    // UI refs
-    const dbgCustom = document.getElementById("dbgCustom");
+    let lastResponse  = null;
+    let isLoggingIn   = false; // evita logins concorrentes
+
+    // Refs de UI
+    const dbgCustom    = document.getElementById("dbgCustom");
     const dbgPlayFabId = document.getElementById("dbgPlayFabId");
-    const dbgTicket = document.getElementById("dbgTicket");
-    const dbgStatus = document.getElementById("dbgStatus");
-    const pfLog = document.getElementById("pfLog");
-    const pfNotice = document.getElementById("pfNotice");
-    const overlay = document.getElementById("pfOverlay");
-    const overlayText = document.getElementById("pfOverlayText");
-    document.getElementById("pfOverlayClose").addEventListener("click", ()=> overlay.style.display = "none");
+    const dbgTicket    = document.getElementById("dbgTicket");
+    const dbgStatus    = document.getElementById("dbgStatus");
+    const pfLog        = document.getElementById("pfLog");
+    const pfNotice     = document.getElementById("pfNotice");
+    const overlay      = document.getElementById("pfOverlay");
+    const overlayText  = document.getElementById("pfOverlayText");
 
+    document.getElementById("pfOverlayClose")
+      .addEventListener("click", () => overlay.style.display = "none");
+
+    // ── Helpers de UI ──────────────────────────────────────────────────────
     function log(...args) {
-      console.log.apply(console, args);
+      console.log(...args);
       try {
-        const line = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+        const line = args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
         pfLog.value = (pfLog.value ? pfLog.value + "\n" : "") + line;
         pfLog.scrollTop = pfLog.scrollHeight;
-      } catch(e){}
+      } catch (_) {}
     }
 
     function showNotice(text, type) {
       pfNotice.textContent = text || "";
-      pfNotice.className = type ? (type === "error" ? "error" : (type === "warn" ? "warn" : "")) : "";
+      pfNotice.className   = type ? (type === "error" ? "error" : type === "warn" ? "warn" : "") : "";
     }
 
     function setDebugFields() {
-      dbgCustom.textContent = customId;
+      dbgCustom.textContent    = customId;
       dbgPlayFabId.textContent = playFabId || "-";
-      dbgTicket.textContent = sessionTicket ? "[present]" : "-";
-      dbgStatus.textContent = lastResponse ? (lastResponse.status + (lastResponse.tag ? " ("+lastResponse.tag+")" : "")) : "-";
+      dbgTicket.textContent    = sessionTicket ? "[present]" : "-";
+      dbgStatus.textContent    = lastResponse
+        ? lastResponse.status + (lastResponse.tag ? " (" + lastResponse.tag + ")" : "")
+        : "-";
     }
 
-    // wrapper do fetch que faz retry em 401 (re-login) uma vez
-    async function pfPost(endpoint, body, ticket, opts) {
-      opts = opts || {};
+    // ── pfPost — fetch com retry em 401 ────────────────────────────────────
+    async function pfPost(endpoint, body, ticket, opts = {}) {
       const tag = opts.tag || "";
+
       const makeRequest = async (tk) => {
-        const url = BASE_URL + endpoint;
-        // NÃO incluir X-PlayFabTitleId; apenas Content-Type e opcional X-Authorization
+        const url     = BASE_URL + endpoint;
         const headers = { "Content-Type": "application/json" };
         if (tk) headers["X-Authorization"] = tk;
         try {
-          log("[PlayFab JS] POST", url, "tag:", tag, "body:", body, "headers:", { XAuthorization: !!tk });
-          const resp = await fetch(url, { method:"POST", headers, body: JSON.stringify(body) });
+          log("[PlayFab JS] POST", url, "tag:", tag);
+          const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
           let json = null;
-          try { json = await resp.json(); } catch(_){}
-          lastResponse = { status: resp.status, json: json, endpoint:endpoint, tag: tag };
+          try { json = await resp.json(); } catch (_) {}
+          lastResponse = { status: resp.status, json, endpoint, tag };
           setDebugFields();
-          log(`[PlayFab JS] ${endpoint} → status ${resp.status}`, { body: body, resp: json });
-          return { status: resp.status, json: json, respObj: resp };
+          log(`[PlayFab JS] ${endpoint} → ${resp.status}`, json);
+          return { status: resp.status, json };
         } catch (err) {
-          lastResponse = { status:0, error:String(err), endpoint:endpoint };
+          lastResponse = { status: 0, error: String(err), endpoint };
           setDebugFields();
           log("[PlayFab JS] Fetch error", err);
-          return { status:0, json:null, error:err };
+          return { status: 0, json: null, error: err };
         }
       };
 
-      // first try
       let r = await makeRequest(ticket);
 
-      // if 401, try re-login once automatically (common case: expired/invalid ticket)
+      // Re-login automático em caso de 401 (uma única tentativa)
       if (r.status === 401 && !opts._retried) {
-        log("[PlayFab JS] 401 detected, trying automatic re-login...");
-        await login(customId, { silent:true });
-        // attempt again with new ticket
+        log("[PlayFab JS] 401 — tentando re-login automático...");
+        await login(customId, { silent: true });
         opts._retried = true;
         r = await makeRequest(sessionTicket);
       }
       return r;
     }
 
-    // helper: try to call AS3 SWF callbacks
+    // ── callAs3 — tenta chamar callback no SWF via ExternalInterface ────────
     function callAs3IfAvailable(fnName, argObj) {
       try {
-        const arg = JSON.stringify(argObj || {});
-        // try global function first
+        const arg  = JSON.stringify(argObj || {});
         if (typeof window[fnName] === "function") { window[fnName](arg); return true; }
         const elem = document.getElementById("game");
-        if (elem && typeof elem[fnName] === "function") { try { elem[fnName](arg); return true; } catch(_){} }
-        // For Ruffle, custom method access can fail; also try parent
-        if (window.parent && typeof window.parent[fnName] === "function") { window.parent[fnName](arg); return true; }
+        if (elem && typeof elem[fnName] === "function") { elem[fnName](arg); return true; }
+        if (window.parent && typeof window.parent[fnName] === "function") {
+          window.parent[fnName](arg); return true;
+        }
       } catch (err) {
-        console.warn("[PlayFab JS] callAs3IfAvailable error:", err);
+        console.warn("[PlayFab JS] callAs3IfAvailable:", err);
       }
       return false;
     }
 
-    // show overlay list
+    // ── Overlay do leaderboard ──────────────────────────────────────────────
     function showLeaderboardOverlay(entries) {
-      if (!entries || entries.length === 0) overlayText.textContent = "Nenhum resultado.";
-      else {
-        let out = "";
-        for (let i=0;i<entries.length;i++) {
-          const e = entries[i];
+      if (!entries || entries.length === 0) {
+        overlayText.textContent = "Nenhum resultado.";
+      } else {
+        overlayText.textContent = entries.map((e, i) => {
           const name = e.DisplayName || e.PlayFabId || "id";
-          const val = (e.StatValue !== undefined) ? e.StatValue : (e.Value !== undefined ? e.Value : 0);
-          out += (i+1) + ". " + name + " — " + val + "\n";
-        }
-        overlayText.textContent = out;
+          const val  = e.StatValue !== undefined ? e.StatValue : (e.Value !== undefined ? e.Value : 0);
+          return (i + 1) + ". " + name + " — " + val;
+        }).join("\n");
       }
       overlay.style.display = "flex";
     }
 
-    // --- Core actions ---
-
-    async function login(cid, opts) {
-      opts = opts || {};
+    // ── login ───────────────────────────────────────────────────────────────
+    async function login(cid, opts = {}) {
       if (isLoggingIn) {
-        log("[PlayFab JS] login already in progress, returning");
-        return { status:0, json:{ errorMessage: "LoginInProgress" } };
+        log("[PlayFab JS] login já em andamento, aguardando...");
+        return { status: 0, json: { errorMessage: "LoginInProgress" } };
       }
       isLoggingIn = true;
-      showNotice("Tentando conectar ao PlayFab...", "");
-      try {
-        if (cid) { customId = cid; localStorage.setItem("pf_customId", customId); setDebugFields(); }
-        const body = { TitleId: ORIGINAL_TITLE_ID, CustomId: customId, CreateAccount: true, InfoRequestParameters: { GetUserAccountInfo: true } };
-        const r = await pfPost("/Client/LoginWithCustomID", body, null, { tag:"login" });
+      if (!opts.silent) showNotice("Conectando ao PlayFab...", "");
 
-        // Special handling: Player creation disabled (errorCode 22000)
-        if (r && r.status === 400 && r.json && r.json.errorCode === 22000) {
-          log("[PlayFab JS] Player creation disabled for this title (22000).");
-          showNotice("Criação de contas desabilitada para este título. Crie contas via servidor ou habilite criação no Game Manager.", "error");
-          callAs3IfAvailable("onPlayFabLogin", { ok:false, errorCode:22000, errorMessage: r.json.errorMessage || "PlayerCreationDisabled" });
+      try {
+        if (cid) { customId = cid; setStorage("pf_customId", customId); setDebugFields(); }
+
+        const body = {
+          TitleId:    ORIGINAL_TITLE_ID,
+          CustomId:   customId,
+          CreateAccount: true,
+          InfoRequestParameters: { GetUserAccountInfo: true }
+        };
+        const r = await pfPost("/Client/LoginWithCustomID", body, null, { tag: "login" });
+
+        // Criação de conta desabilitada (errorCode 22000)
+        if (r.status === 400 && r.json && r.json.errorCode === 22000) {
+          log("[PlayFab JS] Criação de contas desabilitada (22000).");
+          showNotice("Criação de contas desabilitada para este título. Habilite no Game Manager.", "error");
+          callAs3IfAvailable("onPlayFabLogin", { ok: false, errorCode: 22000, errorMessage: r.json.errorMessage || "PlayerCreationDisabled" });
           isLoggingIn = false;
           return r;
         }
 
         if (r.status === 200 && r.json && r.json.data) {
           sessionTicket = r.json.data.SessionTicket || "";
-          playFabId = r.json.data.PlayFabId || "";
-          callAs3IfAvailable("onPlayFabLogin", { ok:true, data: r.json.data });
+          playFabId     = r.json.data.PlayFabId || "";
+          callAs3IfAvailable("onPlayFabLogin", { ok: true, data: r.json.data });
           setDebugFields();
-          showNotice("Conectado — PlayFabId: " + (playFabId || "-"), ""); // brief success notice
-          // after login, try to fetch user data or leaderboard if needed
-          try { await getUserData(); } catch(_){}
+          if (!opts.silent) showNotice("Conectado — PlayFabId: " + (playFabId || "-"), "");
+          // Busca dados do usuário em background (não bloqueia)
+          getUserData().catch(() => {});
         } else {
           sessionTicket = "";
-          playFabId = "";
-          callAs3IfAvailable("onPlayFabLogin", { ok:false, error: r.json || { status:r.status } });
+          playFabId     = "";
+          callAs3IfAvailable("onPlayFabLogin", { ok: false, error: r.json || { status: r.status } });
           setDebugFields();
-          showNotice("Falha no login (veja logs).", "error");
-          log("[PlayFab JS] login failed", r);
+          if (!opts.silent) showNotice("Falha no login (veja os logs).", "error");
+          log("[PlayFab JS] login falhou", r);
         }
+
         isLoggingIn = false;
         return r;
       } catch (err) {
         isLoggingIn = false;
-        log("[PlayFab JS] login error", err);
-        callAs3IfAvailable("onPlayFabLogin", { ok:false, error:String(err) });
-        showNotice("Erro de rede ao tentar conectar.", "error");
-        return { status:0, error:err };
+        log("[PlayFab JS] login exception", err);
+        callAs3IfAvailable("onPlayFabLogin", { ok: false, error: String(err) });
+        if (!opts.silent) showNotice("Erro de rede ao conectar.", "error");
+        return { status: 0, error: err };
       }
     }
 
-    async function submitScore(score,kills,level) {
-      const body = { Statistics: [
-        { StatisticName:"Score", Value: parseInt(score||0) },
-        { StatisticName:"Kills", Value: parseInt(kills||0) },
-        { StatisticName:"Level", Value: parseInt(level||0) }
-      ]};
-      const r = await pfPost("/Client/UpdatePlayerStatistics", body, sessionTicket, { tag:"submitScore" });
+    // ── submitScore ─────────────────────────────────────────────────────────
+    async function submitScore(score, kills, level) {
+      const body = {
+        Statistics: [
+          { StatisticName: "Score", Value: parseInt(score  || 0) },
+          { StatisticName: "Kills", Value: parseInt(kills  || 0) },
+          { StatisticName: "Level", Value: parseInt(level  || 0) }
+        ]
+      };
+      const r = await pfPost("/Client/UpdatePlayerStatistics", body, sessionTicket, { tag: "submitScore" });
       callAs3IfAvailable("onSubmitScoreResult", { status: r.status, json: r.json });
       return r;
     }
 
+    // ── getTopN ─────────────────────────────────────────────────────────────
     async function getTopN(statName, n) {
       const body = { StatisticName: statName, StartPosition: 0, MaxResultsCount: n };
-      const r = await pfPost("/Client/GetLeaderboard", body, sessionTicket, { tag:"getTopN" });
+      const r    = await pfPost("/Client/GetLeaderboard", body, sessionTicket, { tag: "getTopN" });
       if (r.status === 200 && r.json && r.json.data && r.json.data.Leaderboard) {
-        callAs3IfAvailable("onLeaderboardResult", { ok:true, entries: r.json.data.Leaderboard });
-        showLeaderboardOverlay(r.json.data.Leaderboard);
+        const entries = r.json.data.Leaderboard;
+        callAs3IfAvailable("onLeaderboardResult", { ok: true, entries });
+        showLeaderboardOverlay(entries);
         showNotice("Leaderboard carregado.", "");
       } else {
-        callAs3IfAvailable("onLeaderboardResult", { ok:false, error: r.json || { status:r.status } });
-        log("[PlayFab JS] getTopN failed", r);
-        showNotice("Falha ao carregar leaderboard (ver logs).", "warn");
+        callAs3IfAvailable("onLeaderboardResult", { ok: false, error: r.json || { status: r.status } });
+        log("[PlayFab JS] getTopN falhou", r);
+        showNotice("Falha ao carregar leaderboard (veja logs).", "warn");
       }
       return r;
     }
 
-    // Ensure login before setting display name
+    // ── setDisplayName ──────────────────────────────────────────────────────
     async function setDisplayName(displayName) {
+      // Se não tem ticket, faz login primeiro
       if (!sessionTicket) {
-        log("[PlayFab JS] No sessionTicket — logging in before setDisplayName...");
+        log("[PlayFab JS] Sem sessionTicket — logando antes de salvar nome...");
         showNotice("Autenticando antes de salvar o nome...", "");
         const loginRes = await login(customId);
         if (!loginRes || loginRes.status !== 200) {
-          log("[PlayFab JS] Cannot set display name because login failed", loginRes);
-          callAs3IfAvailable("onSetDisplayNameResult", { status:0, error:"LoginFailed" });
+          log("[PlayFab JS] Não foi possível salvar nome: login falhou", loginRes);
+          callAs3IfAvailable("onSetDisplayNameResult", { status: 0, error: "LoginFailed" });
           showNotice("Não foi possível autenticar para salvar o nome.", "error");
-          return loginRes || { status:0 };
+          return loginRes || { status: 0 };
         }
       }
+
       const body = { DisplayName: String(displayName) };
-      const r = await pfPost("/Client/UpdateUserTitleDisplayName", body, sessionTicket, { tag:"setDisplayName" });
-      // If the server returns 200, notify AS3 that it's ok
+      const r    = await pfPost("/Client/UpdateUserTitleDisplayName", body, sessionTicket, { tag: "setDisplayName" });
+
       if (r && r.status === 200) {
-        showNotice("Nome salvo com sucesso!", ""); 
+        showNotice("Nome salvo com sucesso!", "");
       } else if (r && r.status === 401) {
-        showNotice("Sessão inválida. Tentando reautenticar...", "warn");
+        showNotice("Sessão inválida — tentando reautenticar...", "warn");
+      } else {
+        showNotice("Erro ao salvar nome (status " + (r ? r.status : "?") + ").", "error");
       }
+
       callAs3IfAvailable("onSetDisplayNameResult", { status: r.status, json: r.json });
       return r;
     }
 
+    // ── getUserData / saveUserData ───────────────────────────────────────────
     async function getUserData() {
-      const r = await pfPost("/Client/GetUserData", {}, sessionTicket, { tag:"getUserData" });
+      const r = await pfPost("/Client/GetUserData", {}, sessionTicket, { tag: "getUserData" });
       if (r.status === 200 && r.json && r.json.data) {
-        const data = r.json.data.Data || {};
-        callAs3IfAvailable("onUserDataResult", { ok:true, data: data });
+        callAs3IfAvailable("onUserDataResult", { ok: true, data: r.json.data.Data || {} });
       } else {
-        callAs3IfAvailable("onUserDataResult", { ok:false, error: r.json || { status:r.status } });
+        callAs3IfAvailable("onUserDataResult", { ok: false, error: r.json || { status: r.status } });
       }
       return r;
     }
 
     async function saveUserData(key, value) {
-      const body = { Data: {} };
-      body.Data[key] = String(value);
-      const r = await pfPost("/Client/UpdateUserData", body, sessionTicket, { tag:"saveUserData" });
-      callAs3IfAvailable("onSaveUserDataResult", { status:r.status, json:r.json });
+      const body = { Data: { [key]: String(value) } };
+      const r    = await pfPost("/Client/UpdateUserData", body, sessionTicket, { tag: "saveUserData" });
+      callAs3IfAvailable("onSaveUserDataResult", { status: r.status, json: r.json });
       return r;
     }
 
-    // expose for AS3 (ExternalInterface.call)
-    window.playfabLoginFromPage = (cid) => login(cid);
-    window.playfabSubmitScore = (score,kills,level) => submitScore(score,kills,level);
-    window.playfabGetTopN = (statName,n) => getTopN(statName,n);
-    window.playfabSetDisplayName = (displayName) => setDisplayName(displayName);
-    window.playfabSaveUserData = (key,value) => saveUserData(key,value);
-    window.playfabGetUserData = () => getUserData();
+    // ── Exposição global (chamadas do AS3 via ExternalInterface) ────────────
+    window.playfabLoginFromPage  = (cid)                 => login(cid);
+    window.playfabSubmitScore    = (score, kills, level) => submitScore(score, kills, level);
+    window.playfabGetTopN        = (statName, n)         => getTopN(statName, n);
+    window.playfabSetDisplayName = (displayName)         => setDisplayName(displayName);
+    window.playfabSaveUserData   = (key, value)          => saveUserData(key, value);
+    window.playfabGetUserData    = ()                    => getUserData();
 
-    // debugging helpers
+    // Helpers de debug via console
     window._pf_debug = {
-      getSessionTicket: ()=> sessionTicket,
-      getPlayFabId: ()=> playFabId,
-      getCustomId: ()=> customId,
-      lastResponse: ()=> lastResponse
+      getSessionTicket: () => sessionTicket,
+      getPlayFabId:     () => playFabId,
+      getCustomId:      () => customId,
+      lastResponse:     () => lastResponse
     };
 
-    // auto-login on page load (non-blocking)
-    window.addEventListener('load', function(){ login(); });
+    // ✅ JS-2 CORRIGIDO — auto-login REMOVIDO do window.load.
+    // O AS3 já chama window.playfabLoginFromPage() via ExternalInterface.call()
+    // em playfabBootLogin(). Deixar os dois causaria condição de corrida.
+    // Se precisar testar o painel sem o SWF, use o botão "Forçar Login".
 
-    // UI buttons
-    document.getElementById("btnForceLogin").addEventListener("click", ()=> login(customId));
-    document.getElementById("btnGetTop10").addEventListener("click", ()=> getTopN("Score", 10));
-    document.getElementById("btnClearLog").addEventListener("click", ()=> { pfLog.value = ""; });
+    // ── Botões do painel de debug ───────────────────────────────────────────
+    document.getElementById("btnForceLogin").addEventListener("click", () => login(customId));
+    document.getElementById("btnGetTop10")  .addEventListener("click", () => getTopN("Score", 10));
+    document.getElementById("btnClearLog")  .addEventListener("click", () => { pfLog.value = ""; });
 
-    // initial debug values
+    // Estado inicial do painel
     setDebugFields();
-    showNotice("Painel pronto. Clique 'Forçar Login' para conectar.", "");
+    showNotice("Painel pronto. O SWF fará login automaticamente ao carregar.", "");
 
   })();
   </script>
