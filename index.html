@@ -4,13 +4,31 @@
   <meta charset="utf-8" />
   <title>Hunter Space — Debug PlayFab</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!--
-    ✅ JS-3 CORRIGIDO — versão fixada do Ruffle (não usar @latest ou unpkg sem versão).
-    Troque pela versão nightly mais recente disponível em:
-    https://github.com/ruffle-rs/ruffle/releases
-    Exemplo abaixo usa o CDN oficial do Ruffle:
-  -->
-  <script src="https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2024.09.10"></script>
+  <!-- Ruffle carregado do CDN oficial com fallback -->
+  <script>
+    (function() {
+      const cdns = [
+        "https://unpkg.com/@ruffle-rs/ruffle",
+        "https://cdn.jsdelivr.net/npm/@ruffle-rs/ruffle"
+      ];
+      let idx = 0;
+      function tryLoad() {
+        if (idx >= cdns.length) {
+          document.addEventListener("DOMContentLoaded", function() {
+            const c = document.getElementById("game-container");
+            if (c) c.innerHTML = "<p style='color:#f88;padding:16px'>Erro: não foi possível carregar o Ruffle de nenhuma fonte CDN.<br>Verifique sua conexão ou hospede o Ruffle localmente.</p>";
+          });
+          return;
+        }
+        const s = document.createElement("script");
+        s.src = cdns[idx];
+        s.onload  = function() { console.log("[Ruffle] carregado de:", cdns[idx]); };
+        s.onerror = function() { console.warn("[Ruffle] falhou:", cdns[idx]); idx++; tryLoad(); };
+        document.head.appendChild(s);
+      }
+      tryLoad();
+    })();
+  </script>
   <style>
     html, body { height:100%; margin:0; background:#000; color:#fff; font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
     .wrap { display:flex; gap:12px; padding:12px; align-items:flex-start; }
@@ -63,27 +81,47 @@
 
   <script>
   // ─── Ruffle: carrega o SWF ────────────────────────────────────────────────
-  window.addEventListener("DOMContentLoaded", () => {
-    const ruffle    = window.RufflePlayer && window.RufflePlayer.newest
-                      ? window.RufflePlayer.newest() : null;
+  // Tenta iniciar o Ruffle — aguarda até 8s pelo script CDN
+  function initRuffle() {
     const container = document.getElementById("game-container");
-    if (!ruffle) {
-      container.innerHTML = "Não foi possível carregar o Ruffle.";
-      return;
+    if (!container) return;
+
+    if (window.RufflePlayer && window.RufflePlayer.newest) {
+      const ruffle = window.RufflePlayer.newest();
+      const player = ruffle.createPlayer();
+      player.id           = "game";
+      player.style.width  = "100%";
+      player.style.height = "100%";
+      player.tabIndex     = 0;
+      container.innerHTML = "";
+      container.appendChild(player);
+
+      setTimeout(() => { try { player.focus(); } catch(_){} }, 500);
+      container.addEventListener("click", () => { try { player.focus(); } catch(_){} });
+
+      // Carrega o SWF (coloque rocket_game.swf no mesmo diretório)
+      player.load("rocket_game.swf");
+      console.log("[Ruffle] player iniciado.");
+    } else {
+      container.innerHTML =
+        "<p style='color:#f88;padding:20px;font-size:14px'>" +
+        "❌ Ruffle não carregou ainda. Verifique o console (F12) para detalhes de rede.</p>";
     }
-    const player = ruffle.createPlayer();
-    player.id    = "game";
-    container.appendChild(player);
-    player.style.width  = "100%";
-    player.style.height = "100%";
-    player.tabIndex = 0;
+  }
 
-    // Foco automático
-    setTimeout(() => { try { player.focus(); } catch(e){} }, 500);
-    container.addEventListener("click", () => { try { player.focus(); } catch(e){} });
-
-    // Carrega o SWF (coloque rocket_game.swf no mesmo diretório)
-    player.load("rocket_game.swf");
+  // Aguarda o DOM e dá tempo ao script CDN de baixar (máx 8s)
+  document.addEventListener("DOMContentLoaded", function() {
+    let waited = 0;
+    const interval = setInterval(function() {
+      waited += 200;
+      if (window.RufflePlayer && window.RufflePlayer.newest) {
+        clearInterval(interval);
+        initRuffle();
+      } else if (waited >= 8000) {
+        clearInterval(interval);
+        initRuffle(); // mostra mensagem de erro
+      }
+    }, 200);
   });
 
   // ─── PlayFab IIFE ─────────────────────────────────────────────────────────
