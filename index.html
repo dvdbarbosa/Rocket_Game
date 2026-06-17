@@ -101,12 +101,18 @@
 
       // Carrega o SWF (coloque rocket_game.swf no mesmo diretório)
       player.load({
-        url: "rocket_game.swf",
-        parameters: {},
-        config: {
-          preferredRenderer: "canvas"   // mais leve que WebGL no Ruffle
-        }
-      });
+      url: "rocket_game.swf",
+      parameters: {},
+      config: {
+        preferredRenderer: "canvas"
+      }
+    });
+      console.log("[Ruffle] player iniciado.");
+    } else {
+      container.innerHTML =
+        "<p style='color:#f88;padding:20px;font-size:14px'>" +
+        "❌ Ruffle não carregou ainda. Verifique o console (F12) para detalhes de rede.</p>";
+    }
   }
 
   // Aguarda o DOM e dá tempo ao script CDN de baixar (máx 8s)
