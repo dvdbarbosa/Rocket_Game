@@ -31,43 +31,13 @@
   </script>
   <style>
     html, body { height:100%; margin:0; background:#000; color:#fff; font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
-    .wrap { display:flex; gap:12px; padding:12px; align-items:flex-start; }
+    .wrap { display:flex; justify-content:center; padding:12px; }
     .frame { width:800px; height:600px; background:#000; border:1px solid #222; }
-    .panel { width:340px; background:#0d0d0d; border:1px solid #222; padding:10px; box-sizing:border-box; font-size:13px; }
-    .panel h4 { margin:6px 0 8px 0; font-size:14px; }
-    .kv { display:flex; justify-content:space-between; padding:2px 0; }
-    .small { font-size:12px; color:#bbb; }
-    button { padding:6px 8px; margin-top:6px; }
-    textarea { width:100%; height:120px; background:#071018; color:#bfe; border:1px solid #163; padding:6px; box-sizing:border-box; font-family:monospace; font-size:12px; }
-    .ok { color:#7df27d; } .err { color:#ff7b7b; }
-    #pfNotice { margin-top:8px; padding:8px; border-radius:6px; background:#111; color:#ddd; font-size:13px; min-height:34px; display:flex; align-items:center; }
-    #pfNotice.warn  { background:#3b2a00; color:#ffd87a; }
-    #pfNotice.error { background:#2a0000; color:#ffbdbd; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="frame" id="game-container"></div>
-
-    <div class="panel" id="debugPanel">
-      <h4>PlayFab Debug Panel</h4>
-      <div class="kv"><span>TitleId</span><span id="dbgTitle">15AC49</span></div>
-      <div class="kv"><span>customId</span><span id="dbgCustom">-</span></div>
-      <div class="kv"><span>playFabId</span><span id="dbgPlayFabId">-</span></div>
-      <div class="kv"><span>sessionTicket</span><span id="dbgTicket">-</span></div>
-      <div class="kv"><span>last status</span><span id="dbgStatus">-</span></div>
-
-      <div style="margin-top:8px;">
-        <button id="btnForceLogin">Forçar Login</button>
-        <button id="btnGetTop10">Pegar Top10</button>
-        <button id="btnClearLog">Limpar Log</button>
-      </div>
-
-      <div id="pfNotice">Status: aguardando ações.</div>
-
-      <h4 style="margin-top:10px">Logs / Última resposta</h4>
-      <textarea id="pfLog" readonly></textarea>
-    </div>
   </div>
 
   <!-- Overlay do leaderboard -->
@@ -104,7 +74,10 @@
       url: "rocket_game.swf",
       parameters: {},
       config: {
-        preferredRenderer: "canvas"
+        preferredRenderer: "canvas",
+        warnOnUnsupportedContent: false,
+        logLevel: "error",
+        quality: "medium"
       }
     });
       console.log("[Ruffle] player iniciado.");
@@ -156,42 +129,10 @@
     let lastResponse  = null;
     let isLoggingIn   = false; // evita logins concorrentes
 
-    // Refs de UI
-    const dbgCustom    = document.getElementById("dbgCustom");
-    const dbgPlayFabId = document.getElementById("dbgPlayFabId");
-    const dbgTicket    = document.getElementById("dbgTicket");
-    const dbgStatus    = document.getElementById("dbgStatus");
-    const pfLog        = document.getElementById("pfLog");
-    const pfNotice     = document.getElementById("pfNotice");
-    const overlay      = document.getElementById("pfOverlay");
-    const overlayText  = document.getElementById("pfOverlayText");
-
-    document.getElementById("pfOverlayClose")
-      .addEventListener("click", () => overlay.style.display = "none");
-
-    // ── Helpers de UI ──────────────────────────────────────────────────────
-    function log(...args) {
-      console.log(...args);
-      try {
-        const line = args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
-        pfLog.value = (pfLog.value ? pfLog.value + "\n" : "") + line;
-        pfLog.scrollTop = pfLog.scrollHeight;
-      } catch (_) {}
-    }
-
-    function showNotice(text, type) {
-      pfNotice.textContent = text || "";
-      pfNotice.className   = type ? (type === "error" ? "error" : type === "warn" ? "warn" : "") : "";
-    }
-
-    function setDebugFields() {
-      dbgCustom.textContent    = customId;
-      dbgPlayFabId.textContent = playFabId || "-";
-      dbgTicket.textContent    = sessionTicket ? "[present]" : "-";
-      dbgStatus.textContent    = lastResponse
-        ? lastResponse.status + (lastResponse.tag ? " (" + lastResponse.tag + ")" : "")
-        : "-";
-    }
+    // Refs de UI (removidas — painel de debug desativado)
+    function log(...args) { console.log(...args); }
+    function showNotice(text, type) { console.log("[Notice]", text); }
+    function setDebugFields() {}
 
     // ── pfPost — fetch com retry em 401 ────────────────────────────────────
     async function pfPost(endpoint, body, ticket, opts = {}) {
@@ -417,10 +358,7 @@
     // em playfabBootLogin(). Deixar os dois causaria condição de corrida.
     // Se precisar testar o painel sem o SWF, use o botão "Forçar Login".
 
-    // ── Botões do painel de debug ───────────────────────────────────────────
-    document.getElementById("btnForceLogin").addEventListener("click", () => login(customId));
-    document.getElementById("btnGetTop10")  .addEventListener("click", () => getTopN("Score", 10));
-    document.getElementById("btnClearLog")  .addEventListener("click", () => { pfLog.value = ""; });
+    // Botões de debug removidos junto com o painel
 
     // Estado inicial do painel
     setDebugFields();
